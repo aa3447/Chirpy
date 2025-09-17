@@ -21,9 +21,9 @@ func main() {
 	}
 
 	serverMux.Handle("/app/", http.StripPrefix("/app" , apiConfig.incrementFileserverHits(http.FileServer(http.Dir(".")))))
-	serverMux.HandleFunc("/healthz", readinessHandler)
-	serverMux.HandleFunc("/metrics", apiConfig.getFileserverHitsHandler)
-	serverMux.HandleFunc("/reset", apiConfig.resetFileserverHitsHandler)
+	serverMux.HandleFunc("GET /api/healthz", readinessHandler)
+	serverMux.HandleFunc("GET /admin/metrics", apiConfig.getFileserverHitsHandler)
+	serverMux.HandleFunc("POST /admin/reset", apiConfig.resetFileserverHitsHandler)
 
 	serverStruct.ListenAndServe()
 }
@@ -35,9 +35,10 @@ func readinessHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *apiConfig) getFileserverHitsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	hits := fmt.Sprintf("Hits: %d", a.fileserverHits.Load())
+
+	hits := fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", a.fileserverHits.Load())
 	w.Write([]byte(hits))
 }
 

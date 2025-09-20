@@ -8,15 +8,35 @@ import (
 	"strings"
 	"sync/atomic"
 	"unicode"
+	"os"
+	"database/sql"
+	"home/aa3447/workspace/github.com/aa3447/chirpy/internal/database"
+	
+	
+	"github.com/joho/godotenv"
+	
+	_ "github.com/lib/pq"
+
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	queries *database.Queries
 }
 
 func main() {
+	godotenv.Load()
+
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil{
+		log.Printf("Error opening database: %s", err)
+		os.Exit(1)
+	}
 	serverMux := http.NewServeMux()
+	
 	apiConfig := &apiConfig{}
+	apiConfig.queries = database.New(db)
 
 	serverStruct := &http.Server{
 		Addr:    ":8080",

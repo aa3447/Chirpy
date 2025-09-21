@@ -10,10 +10,12 @@ import (
 	"unicode"
 	"os"
 	"database/sql"
+	"time"
 	"home/aa3447/workspace/github.com/aa3447/chirpy/internal/database"
 	
 	
 	"github.com/joho/godotenv"
+	"github.com/google/uuid"
 	
 	_ "github.com/lib/pq"
 
@@ -48,6 +50,7 @@ func main() {
 	serverMux.HandleFunc("GET /admin/metrics", apiConfig.getFileserverHitsHandler)
 	serverMux.HandleFunc("POST /admin/reset", apiConfig.resetFileserverHitsHandler)
 	serverMux.HandleFunc("POST /api/validate_chirp", validatePostHandler)
+	serverMux.HandleFunc("POST /api/users", apiConfig.createUserHandle)
 
 	serverStruct.ListenAndServe()
 }
@@ -174,10 +177,21 @@ func (a *apiConfig) getFileserverHitsHandler(w http.ResponseWriter, r *http.Requ
 }
 
 func (a *apiConfig) resetFileserverHitsHandler(w http.ResponseWriter, r *http.Request) {
+	if os.Getenv("PLATFORM") != "dev"{
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	err := a.queries.ClearUsers(r.Context())
+	if err != nil{
+		log.Printf("Error clearing users: %s", err)
+		w.WriteHeader(500)
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	a.fileserverHits.Store(0)
-	w.Write([]byte("Hits reset to 0"))
+	w.Write([]byte("Hits reset to 0\nUsers Cleared"))
 }
 
 func (a *apiConfig) incrementFileserverHits(handle http.Handler) http.Handler {
@@ -190,4 +204,49 @@ func (a *apiConfig) incrementFileserverHits(handle http.Handler) http.Handler {
 	handlerFunc := http.HandlerFunc(handler)
 
 	return handlerFunc
+}
+
+func (a *apiConfig) createUserHandle(w http.ResponseWriter, r *http.Request){
+	type inputJSON struct {
+		Email string `json:"email"`
+	}
+	type outputJSON struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Email     string `json:"email"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	input := inputJSON{}
+	err := decoder.Decode(&input)
+	if err != nil {
+		log.Printf("Error decoding: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	user, err := a.queries.CreateUser(r.Context(), input.Email)
+	if err != nil{
+		log.Printf("Error crating user: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	output := outputJSON{
+		ID: user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email: user.Email,
+	}
+
+	o, err := json.Marshal(output)
+	if err != nil {
+		log.Printf("Error encoding: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	w.Write(o)
 }

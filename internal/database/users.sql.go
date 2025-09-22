@@ -7,15 +7,56 @@ package database
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
+const clearChirps = `-- name: ClearChirps :exec
+DELETE FROM chirps CASCADE
+`
+
+func (q *Queries) ClearChirps(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, clearChirps)
+	return err
+}
+
 const clearUsers = `-- name: ClearUsers :exec
-TRUNCATE users
+DELETE FROM users CASCADE
 `
 
 func (q *Queries) ClearUsers(ctx context.Context) error {
 	_, err := q.db.ExecContext(ctx, clearUsers)
 	return err
+}
+
+const createChirp = `-- name: CreateChirp :one
+INSERT INTO chirps (id, created_at, updated_at, body, user_id)
+VALUES (
+    gen_random_uuid(),
+    NOW(),
+    NOW(),
+    $1,
+    $2
+)
+RETURNING id, created_at, updated_at, body, user_id
+`
+
+type CreateChirpParams struct {
+	Body   string
+	UserID uuid.UUID
+}
+
+func (q *Queries) CreateChirp(ctx context.Context, arg CreateChirpParams) (Chirp, error) {
+	row := q.db.QueryRowContext(ctx, createChirp, arg.Body, arg.UserID)
+	var i Chirp
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Body,
+		&i.UserID,
+	)
+	return i, err
 }
 
 const createUser = `-- name: CreateUser :one

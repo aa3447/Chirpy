@@ -49,7 +49,7 @@ func main() {
 	serverMux.HandleFunc("GET /api/healthz", readinessHandler)
 	serverMux.HandleFunc("GET /admin/metrics", apiConfig.getFileserverHitsHandler)
 	serverMux.HandleFunc("POST /admin/reset", apiConfig.resetFileserverHitsHandler)
-	serverMux.HandleFunc("POST /api/validate_chirp", validatePostHandler)
+	serverMux.HandleFunc("POST /api/chirps", apiConfig.validateChirp)
 	serverMux.HandleFunc("POST /api/users", apiConfig.createUserHandle)
 
 	serverStruct.ListenAndServe()
@@ -61,13 +61,21 @@ func readinessHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-func validatePostHandler(w http.ResponseWriter, r *http.Request) {
+func (a *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 	type inputJSON struct {
 		Body string `json:"body"`
+		User_id uuid.UUID `json:"user_id"`
 	}
 	type outputJSON struct {
 		Error string `json:"error"`
 		Cleaned_body string `json:"cleaned_body"`
+	}
+	type chirp struct{
+		ID        uuid.UUID `json:"chirp_id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string `json:"body"`
+		UserID    uuid.UUID `json:"user_id"`
 	}
 
 	filterSlice := []string{"kerfuffle", "sharbert", "fornax"}
@@ -137,10 +145,28 @@ func validatePostHandler(w http.ResponseWriter, r *http.Request) {
 			cutString = ""
 		}
 
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(201)
+	}
+	params := database.CreateChirpParams{
+		Body: output.Cleaned_body,
+		UserID: input.User_id,
+	}
+	qChirp, err := a.queries.CreateChirp(r.Context(), params)
+	if err != nil {
+		log.Printf("Error creating chirp: %s", err)
+		w.WriteHeader(500)
+		return
 	}
 
-	o, err := json.Marshal(output)
+	a_chirp := chirp{
+		ID: qChirp.ID,
+  		CreatedAt: qChirp.CreatedAt,
+  		UpdatedAt: qChirp.UpdatedAt,
+  		Body: qChirp.Body,
+  		UserID: qChirp.UserID,
+	}
+
+	o, err := json.Marshal(a_chirp)
 	if err != nil {
 		log.Printf("Error encoding: %s", err)
 		w.WriteHeader(500)
@@ -188,10 +214,17 @@ func (a *apiConfig) resetFileserverHitsHandler(w http.ResponseWriter, r *http.Re
 		w.WriteHeader(500)
 		return
 	}
+	err = a.queries.ClearChirps(r.Context())
+	if err != nil{
+		log.Printf("Error clearing chirps %s", err)
+		w.WriteHeader(500)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	a.fileserverHits.Store(0)
-	w.Write([]byte("Hits reset to 0\nUsers Cleared"))
+	w.Write([]byte("Hits reset to 0\nUsers Cleared\nChirps cleared"))
 }
 
 func (a *apiConfig) incrementFileserverHits(handle http.Handler) http.Handler {

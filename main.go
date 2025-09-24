@@ -48,6 +48,7 @@ func main() {
 	serverMux.Handle("/app/", http.StripPrefix("/app", apiConfig.incrementFileserverHits(http.FileServer(http.Dir(".")))))
 	serverMux.HandleFunc("GET /api/healthz", readinessHandler)
 	serverMux.HandleFunc("GET /admin/metrics", apiConfig.getFileserverHitsHandler)
+	serverMux.HandleFunc("GET /api/chirps", apiConfig.getChirps)
 	serverMux.HandleFunc("POST /admin/reset", apiConfig.resetFileserverHitsHandler)
 	serverMux.HandleFunc("POST /api/chirps", apiConfig.validateChirp)
 	serverMux.HandleFunc("POST /api/users", apiConfig.createUserHandle)
@@ -67,7 +68,6 @@ func (a *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 		User_id uuid.UUID `json:"user_id"`
 	}
 	type outputJSON struct {
-		Error string `json:"error"`
 		Cleaned_body string `json:"cleaned_body"`
 	}
 	type chirp struct{
@@ -91,62 +91,60 @@ func (a *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 
 	output := outputJSON{}
 	if len(input.Body) > 140 {
-		output.Error = "Chirp is too long"
-		w.WriteHeader(400)
-	} else {
-		tempString := input.Body
-		cutString := ""
-		caseInsensitiveWord := ""
-
-		for _, word := range filterSlice {
-			currentIndex := strings.Index(strings.ToLower(tempString), word)
-			for currentIndex > -1 {
-				var byteSlice []byte
-				caseInsensitiveWord = tempString[currentIndex:currentIndex + len(word)]
-				
-				if len(word) == len(tempString) {
-					tempString = strings.Replace(tempString, caseInsensitiveWord, "****", 1)
-					currentIndex = -2
-				} else {
-					if currentIndex == 0  {
-						currentChar := tempString[len(word)]
-						byteSlice = append(byteSlice, currentChar)
-					} else if currentIndex+len(word) == len(tempString) {
-						currentChar := tempString[currentIndex-1]
-						byteSlice = append(byteSlice, currentChar)
-					} else {
-						backChar := tempString[currentIndex+len(word)]
-						frontChar := tempString[currentIndex-1]
-						byteSlice = append(byteSlice, backChar)
-						byteSlice = append(byteSlice, frontChar)
-					}
-
-					if len(byteSlice) > 1 && filterMultiCharCheck(byteSlice) {
-						tempString = strings.Replace(tempString, caseInsensitiveWord, "****", 1)
-					} else if len(byteSlice) == 1 && filterCharCheck(byteSlice[0]) {
-						tempString= strings.Replace(tempString, caseInsensitiveWord, "****", 1)
-					} else {
-						before, after, found := strings.Cut(tempString, caseInsensitiveWord)
-						if found {
-							cutString += before + word
-							tempString = after
-						}	
-					}
-					currentIndex = strings.Index(strings.ToLower(tempString), word)
-				}	
-			}
-			
-			if cutString == "" {
-				output.Cleaned_body = tempString
-			} else {
-				output.Cleaned_body = cutString + tempString
-			}
-			tempString = output.Cleaned_body
-			cutString = ""
-		}
-
-		w.WriteHeader(201)
+		sendErrorJSON(w, fmt.Errorf("chirp is too long"), 400)
+		return
 	}
+	
+	tempString := input.Body
+	cutString := ""
+	caseInsensitiveWord := ""
+	for _, word := range filterSlice {
+		currentIndex := strings.Index(strings.ToLower(tempString), word)
+		for currentIndex > -1 {
+			var byteSlice []byte
+			caseInsensitiveWord = tempString[currentIndex:currentIndex + len(word)]
+			
+			if len(word) == len(tempString) {
+				tempString = strings.Replace(tempString, caseInsensitiveWord, "****", 1)
+				currentIndex = -2
+			} else {
+				if currentIndex == 0  {
+					currentChar := tempString[len(word)]
+					byteSlice = append(byteSlice, currentChar)
+				} else if currentIndex+len(word) == len(tempString) {
+					currentChar := tempString[currentIndex-1]
+					byteSlice = append(byteSlice, currentChar)
+				} else {
+					backChar := tempString[currentIndex+len(word)]
+					frontChar := tempString[currentIndex-1]
+					byteSlice = append(byteSlice, backChar)
+					byteSlice = append(byteSlice, frontChar)
+				}
+				if len(byteSlice) > 1 && filterMultiCharCheck(byteSlice) {
+					tempString = strings.Replace(tempString, caseInsensitiveWord, "****", 1)
+				} else if len(byteSlice) == 1 && filterCharCheck(byteSlice[0]) {
+					tempString= strings.Replace(tempString, caseInsensitiveWord, "****", 1)
+				} else {
+					before, after, found := strings.Cut(tempString, caseInsensitiveWord)
+					if found {
+						cutString += before + word
+						tempString = after
+					}	
+				}
+				currentIndex = strings.Index(strings.ToLower(tempString), word)
+			}	
+		}
+		
+		if cutString == "" {
+			output.Cleaned_body = tempString
+		} else {
+			output.Cleaned_body = cutString + tempString
+		}
+		tempString = output.Cleaned_body
+		cutString = ""
+	}
+	
+	
 	params := database.CreateChirpParams{
 		Body: output.Cleaned_body,
 		UserID: input.User_id,
@@ -166,14 +164,7 @@ func (a *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
   		UserID: qChirp.UserID,
 	}
 
-	o, err := json.Marshal(a_chirp)
-	if err != nil {
-		log.Printf("Error encoding: %s", err)
-		w.WriteHeader(500)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(o)
+	sendJSON(w, a_chirp, 201)
 }
 
 func filterCharCheck(currentChar byte) bool {
@@ -194,6 +185,36 @@ func filterMultiCharCheck(Chars []byte) bool {
 	return true
 }
 
+func sendErrorJSON(w http.ResponseWriter, err error, errHeaderNumber int){
+	type errorJSON struct {
+		Error string `json:"error"`
+	}
+	errorOut := errorJSON{
+		Error: err.Error(),
+	}
+	w.WriteHeader(errHeaderNumber)
+
+	o, err := json.Marshal(errorOut)
+	if err != nil {
+		log.Printf("Error encoding: %s", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(o)
+}
+
+func sendJSON(w http.ResponseWriter,  inputJSON any, headerNumber int){
+	w.WriteHeader(headerNumber)
+
+	o, err := json.Marshal(inputJSON)
+	if err != nil {
+		log.Printf("Error encoding: %s", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(o)
+}
+
 func (a *apiConfig) getFileserverHitsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -201,6 +222,39 @@ func (a *apiConfig) getFileserverHitsHandler(w http.ResponseWriter, r *http.Requ
 	hits := fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", a.fileserverHits.Load())
 	w.Write([]byte(hits))
 }
+
+func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
+	type chirpsJSON struct{
+		ID        uuid.UUID `json:"chirp_id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string `json:"body"`
+		UserID    uuid.UUID `json:"user_id"`
+	}
+	var chirpsSlice []chirpsJSON
+	
+	chips, err := a.queries.GetAllChirps(r.Context())
+	if err != nil{
+		log.Printf("Error fetching chirp: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	for _ , chirp := range chips{
+		a_chirp := chirpsJSON{
+		ID: chirp.ID,
+  		CreatedAt: chirp.CreatedAt,
+  		UpdatedAt: chirp.UpdatedAt,
+  		Body: chirp.Body,
+  		UserID: chirp.UserID,
+		}
+		chirpsSlice = append(chirpsSlice, a_chirp)
+	}
+
+
+	sendJSON(w, chirpsSlice, 200)
+}
+
 
 func (a *apiConfig) resetFileserverHitsHandler(w http.ResponseWriter, r *http.Request) {
 	if os.Getenv("PLATFORM") != "dev"{

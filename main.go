@@ -48,6 +48,7 @@ func main() {
 	serverMux.Handle("/app/", http.StripPrefix("/app", apiConfig.incrementFileserverHits(http.FileServer(http.Dir(".")))))
 	serverMux.HandleFunc("GET /api/healthz", readinessHandler)
 	serverMux.HandleFunc("GET /admin/metrics", apiConfig.getFileserverHitsHandler)
+	serverMux.HandleFunc("GET /api/chirps/{chirpID}", apiConfig.getChirp)
 	serverMux.HandleFunc("GET /api/chirps", apiConfig.getChirps)
 	serverMux.HandleFunc("POST /admin/reset", apiConfig.resetFileserverHitsHandler)
 	serverMux.HandleFunc("POST /api/chirps", apiConfig.validateChirp)
@@ -71,7 +72,7 @@ func (a *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 		Cleaned_body string `json:"cleaned_body"`
 	}
 	type chirp struct{
-		ID        uuid.UUID `json:"chirp_id"`
+		ID        uuid.UUID `json:"id"`
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Body      string `json:"body"`
@@ -225,7 +226,7 @@ func (a *apiConfig) getFileserverHitsHandler(w http.ResponseWriter, r *http.Requ
 
 func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 	type chirpsJSON struct{
-		ID        uuid.UUID `json:"chirp_id"`
+		ID        uuid.UUID `json:"id"`
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Body      string `json:"body"`
@@ -233,14 +234,14 @@ func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 	}
 	var chirpsSlice []chirpsJSON
 	
-	chips, err := a.queries.GetAllChirps(r.Context())
+	chirps, err := a.queries.GetAllChirps(r.Context())
 	if err != nil{
 		log.Printf("Error fetching chirp: %s", err)
 		w.WriteHeader(500)
 		return
 	}
 
-	for _ , chirp := range chips{
+	for _ , chirp := range chirps{
 		a_chirp := chirpsJSON{
 		ID: chirp.ID,
   		CreatedAt: chirp.CreatedAt,
@@ -253,6 +254,40 @@ func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 
 
 	sendJSON(w, chirpsSlice, 200)
+}
+
+func (a *apiConfig) getChirp(w http.ResponseWriter, r *http.Request) {
+	type chirpJSON struct{
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string `json:"body"`
+		UserID    uuid.UUID `json:"user_id"`
+	}
+
+	uID , err := uuid.Parse(r.PathValue("chirpID"))
+	if err != nil{
+		log.Printf("Error reading chirp ID: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	chirp, err := a.queries.GetChirp(r.Context(),uID)
+	if err != nil{
+		log.Printf("Error fetching chirp: %s", err)
+		w.WriteHeader(404)
+		return
+	}
+
+	a_chirp := chirpJSON{
+		ID: chirp.ID,
+  		CreatedAt: chirp.CreatedAt,
+  		UpdatedAt: chirp.UpdatedAt,
+  		Body: chirp.Body,
+  		UserID: chirp.UserID,
+	}
+
+	sendJSON(w, a_chirp, 200)
 }
 
 

@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"time"
 	"home/aa3447/workspace/github.com/aa3447/chirpy/internal/database"
+	"home/aa3447/workspace/github.com/aa3447/chirpy/internal/auth"
 	
 	
 	"github.com/joho/godotenv"
@@ -53,6 +54,7 @@ func main() {
 	serverMux.HandleFunc("POST /admin/reset", apiConfig.resetFileserverHitsHandler)
 	serverMux.HandleFunc("POST /api/chirps", apiConfig.validateChirp)
 	serverMux.HandleFunc("POST /api/users", apiConfig.createUserHandle)
+	serverMux.HandleFunc("POST /api/login", apiConfig.loginHandle)
 
 	serverStruct.ListenAndServe()
 }
@@ -87,6 +89,7 @@ func (a *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("Error decoding: %s", err)
 		w.WriteHeader(500)
+		w.Write([]byte("Error decoding"))
 		return
 	}
 
@@ -154,6 +157,7 @@ func (a *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("Error creating chirp: %s", err)
 		w.WriteHeader(500)
+		w.Write([]byte("Error creating chirp"))
 		return
 	}
 
@@ -238,6 +242,7 @@ func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 	if err != nil{
 		log.Printf("Error fetching chirp: %s", err)
 		w.WriteHeader(500)
+		w.Write([]byte("Error fetching chirp"))
 		return
 	}
 
@@ -269,6 +274,7 @@ func (a *apiConfig) getChirp(w http.ResponseWriter, r *http.Request) {
 	if err != nil{
 		log.Printf("Error reading chirp ID: %s", err)
 		w.WriteHeader(500)
+		w.Write([]byte("Error reading chirp ID"))
 		return
 	}
 
@@ -276,6 +282,7 @@ func (a *apiConfig) getChirp(w http.ResponseWriter, r *http.Request) {
 	if err != nil{
 		log.Printf("Error fetching chirp: %s", err)
 		w.WriteHeader(404)
+		w.Write([]byte("Error fetching chirp"))
 		return
 	}
 
@@ -330,6 +337,7 @@ func (a *apiConfig) incrementFileserverHits(handle http.Handler) http.Handler {
 
 func (a *apiConfig) createUserHandle(w http.ResponseWriter, r *http.Request){
 	type inputJSON struct {
+		Password string `json:"password"`
 		Email string `json:"email"`
 	}
 	type outputJSON struct {
@@ -345,13 +353,28 @@ func (a *apiConfig) createUserHandle(w http.ResponseWriter, r *http.Request){
 	if err != nil {
 		log.Printf("Error decoding: %s", err)
 		w.WriteHeader(500)
+		w.Write([]byte("Error decoding"))
 		return
 	}
 
-	user, err := a.queries.CreateUser(r.Context(), input.Email)
+	hashed_password, err:= auth.HashPassword(input.Password)
 	if err != nil{
-		log.Printf("Error crating user: %s", err)
+		log.Printf("Error creating password: %s", err)
 		w.WriteHeader(500)
+		w.Write([]byte("Error creating password"))
+		return
+	}
+
+	params := database.CreateUserParams{
+		Email: input.Email,
+		HashedPassword: hashed_password,
+	}
+
+	user, err := a.queries.CreateUser(r.Context(), params)
+	if err != nil{
+		log.Printf("Error creating user: %s", err)
+		w.WriteHeader(500)
+		w.Write([]byte("Error creating user"))
 		return
 	}
 
@@ -362,13 +385,58 @@ func (a *apiConfig) createUserHandle(w http.ResponseWriter, r *http.Request){
 		Email: user.Email,
 	}
 
-	o, err := json.Marshal(output)
+	sendJSON(w,output,201)
+}
+
+func (a *apiConfig) loginHandle(w http.ResponseWriter, r *http.Request){
+	type inputJSON struct {
+		Password string `json:"password"`
+		Email string `json:"email"`
+	}
+	type outputJSON struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Email     string `json:"email"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	input := inputJSON{}
+	err := decoder.Decode(&input)
 	if err != nil {
-		log.Printf("Error encoding: %s", err)
+		log.Printf("Error decoding: %s", err)
 		w.WriteHeader(500)
+		w.Write([]byte("Error decoding"))
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	w.Write(o)
+
+	user, err := a.queries.GetUserByEmail(r.Context(), input.Email)
+	if err != nil {
+		log.Printf("Error fetching user: %s", err)
+		w.WriteHeader(401)
+		w.Write([]byte("401 Unauthorized"))
+		return
+	}
+
+	same, err := auth.CheckPasswordHash(input.Password, user.HashedPassword)
+	if err != nil {
+		log.Printf("Error fetching user: %s", err)
+		w.WriteHeader(401)
+		w.Write([]byte("401 Unauthorized"))
+		return
+	}
+	if !same {
+		w.WriteHeader(401)
+		w.Write([]byte("401 Unauthorized"))
+		return
+	}
+
+	output := outputJSON{
+		ID: user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email: user.Email,
+	}
+	
+	sendJSON(w, output, 200)
 }

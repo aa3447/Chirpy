@@ -3,6 +3,7 @@ package auth
 import (
 	"testing"
 	"time"
+	"net/http"
 
 	"github.com/google/uuid"
 )
@@ -67,6 +68,25 @@ func TestJWTExpire(t *testing.T) {
 
 	if err == nil{
 		t.Errorf("token should be expired: %s", err)
+		return
+	}
+}
+
+func TestGetBearerToken(t *testing.T) {
+	testToken := "dadasdasdasdas"
+	testJWT := "Bearer " + testToken
+	head := http.Header{
+		"Authorization": []string{testJWT},
+	}
+	
+
+	token, err := GetBearerToken(head)
+	if err != nil{
+		t.Errorf("error reading token: %s", err)
+		return
+	}
+	if token != testToken{
+		t.Errorf("token should match: %s", err)
 		return
 	}
 }

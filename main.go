@@ -1,30 +1,30 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"home/aa3447/workspace/github.com/aa3447/chirpy/internal/auth"
+	"home/aa3447/workspace/github.com/aa3447/chirpy/internal/database"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
-	"unicode"
-	"os"
-	"database/sql"
 	"time"
-	"home/aa3447/workspace/github.com/aa3447/chirpy/internal/database"
-	"home/aa3447/workspace/github.com/aa3447/chirpy/internal/auth"
-	
-	
-	"github.com/joho/godotenv"
-	"github.com/google/uuid"
-	
-	_ "github.com/lib/pq"
+	"unicode"
 
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
+
+	_ "github.com/lib/pq"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	queries *database.Queries
+	secret string
 }
 
 func main() {
@@ -40,6 +40,7 @@ func main() {
 	
 	apiConfig := &apiConfig{}
 	apiConfig.queries = database.New(db)
+	apiConfig.secret = os.Getenv("JWTSECRET")
 
 	serverStruct := &http.Server{
 		Addr:    ":8080",
@@ -68,7 +69,6 @@ func readinessHandler(w http.ResponseWriter, r *http.Request) {
 func (a *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 	type inputJSON struct {
 		Body string `json:"body"`
-		User_id uuid.UUID `json:"user_id"`
 	}
 	type outputJSON struct {
 		Cleaned_body string `json:"cleaned_body"`
@@ -90,6 +90,19 @@ func (a *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error decoding: %s", err)
 		w.WriteHeader(500)
 		w.Write([]byte("Error decoding"))
+		return
+	}
+
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		w.WriteHeader(401)
+		w.Write([]byte("401 Unauthorized"))
+		return
+	}
+	userID , err := auth.ValidateJWT(token, a.secret)
+	if err != nil {
+		w.WriteHeader(401)
+		w.Write([]byte("401 Unauthorized"))
 		return
 	}
 
@@ -151,7 +164,7 @@ func (a *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 	
 	params := database.CreateChirpParams{
 		Body: output.Cleaned_body,
-		UserID: input.User_id,
+		UserID: userID,
 	}
 	qChirp, err := a.queries.CreateChirp(r.Context(), params)
 	if err != nil {
@@ -392,13 +405,16 @@ func (a *apiConfig) loginHandle(w http.ResponseWriter, r *http.Request){
 	type inputJSON struct {
 		Password string `json:"password"`
 		Email string `json:"email"`
+		ExpiresInSeconds int `json:"expires"`
 	}
 	type outputJSON struct {
 		ID        uuid.UUID `json:"id"`
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Email     string `json:"email"`
+		Token string `json:"token"`
 	}
+	expired := 3600
 
 	decoder := json.NewDecoder(r.Body)
 	input := inputJSON{}
@@ -431,11 +447,34 @@ func (a *apiConfig) loginHandle(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
+	if input.ExpiresInSeconds > 0 && input.ExpiresInSeconds <= 3600{
+		expired = input.ExpiresInSeconds
+	} else if input.ExpiresInSeconds > 3600{
+		expired = 3600
+	}
+
+	expiredDuration , err:= time.ParseDuration((strconv.Itoa(expired) + "s"))
+	if err != nil {
+		log.Printf("Error parsing time: %s", err)
+		w.WriteHeader(500)
+		w.Write([]byte("Error parsing time"))
+		return
+	}
+	
+	token, err := auth.MakeJWT(user.ID, a.secret , expiredDuration)
+	if err != nil {
+		log.Printf("Error making token: %s", err)
+		w.WriteHeader(500)
+		w.Write([]byte("Error making token"))
+		return
+	}
+
 	output := outputJSON{
 		ID: user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email: user.Email,
+		Token: token,
 	}
 	
 	sendJSON(w, output, 200)

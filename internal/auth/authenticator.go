@@ -3,11 +3,12 @@ package auth
 import (
 	"fmt"
 	"log"
+	"net/http"
+	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-
-	"time"
 )
 
 func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error){
@@ -63,5 +64,16 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error){
 	}
 
 	return userID, nil
+}
+
+func GetBearerToken(headers http.Header) (string, error){
+	fullToken := headers.Get("Authorization")
+	if fullToken == ""{
+		return "", fmt.Errorf("error reading header")
+	}
+
+	token := strings.TrimSpace(strings.Split(fullToken, "Bearer")[1])
+	
+	return token, nil
 }
 

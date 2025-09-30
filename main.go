@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -56,6 +55,8 @@ func main() {
 	serverMux.HandleFunc("POST /api/chirps", apiConfig.validateChirp)
 	serverMux.HandleFunc("POST /api/users", apiConfig.createUserHandle)
 	serverMux.HandleFunc("POST /api/login", apiConfig.loginHandle)
+	serverMux.HandleFunc("POST /api/refresh", apiConfig.refreshHandle)
+	serverMux.HandleFunc("POST /api/revoke", apiConfig.revokeHandle)
 
 	serverStruct.ListenAndServe()
 }
@@ -405,7 +406,6 @@ func (a *apiConfig) loginHandle(w http.ResponseWriter, r *http.Request){
 	type inputJSON struct {
 		Password string `json:"password"`
 		Email string `json:"email"`
-		ExpiresInSeconds int `json:"expires"`
 	}
 	type outputJSON struct {
 		ID        uuid.UUID `json:"id"`
@@ -413,12 +413,28 @@ func (a *apiConfig) loginHandle(w http.ResponseWriter, r *http.Request){
 		UpdatedAt time.Time `json:"updated_at"`
 		Email     string `json:"email"`
 		Token string `json:"token"`
+		RefreshToken string `json:"refresh_token"`
 	}
-	expired := 3600
+	expiredJWT :=  "1h"
+	expiredRefreshToken := "1440h"
+	expireJWTdDuration , err := time.ParseDuration(expiredJWT)
+	if err != nil {
+		log.Printf("Error parsing time: %s", err)
+		w.WriteHeader(500)
+		w.Write([]byte("Error parsing time"))
+		return
+	}
+	expireRefreshDuration , err := time.ParseDuration(expiredRefreshToken)
+	if err != nil {
+		log.Printf("Error parsing time: %s", err)
+		w.WriteHeader(500)
+		w.Write([]byte("Error parsing time"))
+		return
+	}
 
 	decoder := json.NewDecoder(r.Body)
 	input := inputJSON{}
-	err := decoder.Decode(&input)
+	err = decoder.Decode(&input)
 	if err != nil {
 		log.Printf("Error decoding: %s", err)
 		w.WriteHeader(500)
@@ -447,23 +463,31 @@ func (a *apiConfig) loginHandle(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
-	if input.ExpiresInSeconds > 0 && input.ExpiresInSeconds <= 3600{
-		expired = input.ExpiresInSeconds
-	} else if input.ExpiresInSeconds > 3600{
-		expired = 3600
-	}
-
-	expiredDuration , err:= time.ParseDuration((strconv.Itoa(expired) + "s"))
-	if err != nil {
-		log.Printf("Error parsing time: %s", err)
-		w.WriteHeader(500)
-		w.Write([]byte("Error parsing time"))
-		return
-	}
 	
-	token, err := auth.MakeJWT(user.ID, a.secret , expiredDuration)
+	token, err := auth.MakeJWT(user.ID, a.secret , expireJWTdDuration)
 	if err != nil {
 		log.Printf("Error making token: %s", err)
+		w.WriteHeader(500)
+		w.Write([]byte("Error making token"))
+		return
+	}
+	refreshToken, err := auth.MakeRefreshToken()
+	if err != nil {
+		log.Printf("Error making refresh token: %s", err)
+		w.WriteHeader(500)
+		w.Write([]byte("Error making token"))
+		return
+	}
+
+	params := database.CreateRefreshTokenParams{
+		Token: refreshToken,
+		UserID: user.ID,
+		ExpiresAt: time.Now().Add(expireRefreshDuration) ,
+		RevokedAt: sql.NullTime{Valid: false},
+	}
+	_, err = a.queries.CreateRefreshToken(r.Context(), params)
+	if err != nil {
+		log.Printf("Error making refresh token in database: %s", err)
 		w.WriteHeader(500)
 		w.Write([]byte("Error making token"))
 		return
@@ -475,7 +499,78 @@ func (a *apiConfig) loginHandle(w http.ResponseWriter, r *http.Request){
 		UpdatedAt: user.UpdatedAt,
 		Email: user.Email,
 		Token: token,
+		RefreshToken: refreshToken, 
 	}
 	
 	sendJSON(w, output, 200)
+}
+
+func (a *apiConfig) refreshHandle(w http.ResponseWriter, r *http.Request){
+	type outputJSON struct {
+		Token string `json:"token"`
+	}
+
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		w.WriteHeader(401)
+		w.Write([]byte("401 Unauthorized"))
+		return
+	}
+
+	refreshToken , err := a.queries.GetRefreshToken(r.Context(), token)
+	if err != nil || !refreshToken.ExpiresAt.After(time.Now()) || refreshToken.RevokedAt.Valid{
+		w.WriteHeader(401)
+		w.Write([]byte("401 Unauthorized"))
+		return
+	}
+
+	duration , err := time.ParseDuration("1h")
+	if err != nil {
+		log.Printf("Error parsing time: %s", err)
+		w.WriteHeader(500)
+		w.Write([]byte("Error parsing time"))
+		return
+	}
+	
+	token, err = auth.MakeJWT(refreshToken.UserID, a.secret , duration)
+	if err != nil {
+		log.Printf("Error making token: %s", err)
+		w.WriteHeader(500)
+		w.Write([]byte("Error making token"))
+		return
+	}
+
+	output := outputJSON{
+		Token: token,
+	}
+
+	sendJSON(w,output,200)
+}
+
+func (a *apiConfig) revokeHandle(w http.ResponseWriter, r *http.Request){
+
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		w.WriteHeader(401)
+		w.Write([]byte("401 Unauthorized"))
+		return
+	}
+
+	refreshToken , err := a.queries.GetRefreshToken(r.Context(), token)
+	if err != nil || !refreshToken.ExpiresAt.After(time.Now()) || refreshToken.RevokedAt.Valid{
+		w.WriteHeader(401)
+		w.Write([]byte("401 Unauthorized"))
+		return
+	}
+	
+	_, err = a.queries.UpdateRefreshToken(r.Context(), token)
+	if err != nil{
+		log.Printf("Error updating refresh_tokens: %s", err)
+		w.WriteHeader(500)
+		w.Write([]byte("Error updating refresh_tokens"))
+		return
+	}
+	
+	w.WriteHeader(204)
+
 }

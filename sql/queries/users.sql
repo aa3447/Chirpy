@@ -55,6 +55,13 @@ SET updated_at = NOW(),
 WHERE token = $1
 RETURNING *;
 
+-- name: UpdateUsernameAndPassword :one
+UPDATE users
+SET email = $1,
+    hashed_password = $2
+WHERE id = $3
+RETURNING *;
+
 -- name: ClearUsers :exec
 DELETE FROM users CASCADE;
 

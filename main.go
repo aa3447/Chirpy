@@ -63,6 +63,7 @@ func main() {
 	serverMux.HandleFunc("POST /api/login", apiConfig.loginHandle)
 	serverMux.HandleFunc("POST /api/refresh", apiConfig.refreshHandle)
 	serverMux.HandleFunc("POST /api/revoke", apiConfig.revokeHandle)
+	serverMux.HandleFunc("PUT /api/users", apiConfig.updateUserNameAndPasswordHandle)
 
 	serverStruct.ListenAndServe()
 }
@@ -85,13 +86,19 @@ func (a *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	input := validateChirpInputJSON{}
 	err := decoder.Decode(&input)
-	errorHandler(w, err, "Error decoding", 500, true)
+	if errorHandler(w, err, "Error decoding", 500, true){
+		return
+	}
 
 	token, err := auth.GetBearerToken(r.Header)
-	errorHandler(w, err, "Error reading token", 401, false)
+	if errorHandler(w, err, "Error reading token", 401, false){
+		return
+	}
 	
 	userID , err := auth.ValidateJWT(token, a.secret)
-	errorHandler(w, err, "Error validating token", 401, false)
+	if errorHandler(w, err, "Error validating token", 401, false){
+		return
+	}
 
 	output := validateChirpOutputJSON{}
 	if len(input.Body) > 140 {
@@ -111,7 +118,9 @@ func (a *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 		UserID: userID,
 	}
 	qChirp, err := a.queries.CreateChirp(r.Context(), params)
-	errorHandler(w, err, "Error creating chirp", 500, true)
+	if errorHandler(w, err, "Error creating chirp", 500, true){
+		return
+	}
 
 	a_chirp := chirp{
 		ID: qChirp.ID,
@@ -202,14 +211,16 @@ func filterMultiCharCheck(Chars []byte) bool {
 	return true
 }
 
-func errorHandler(w http.ResponseWriter, err error, errText string, headerNumber int, addLog bool) {
+func errorHandler(w http.ResponseWriter, err error, errText string, headerNumber int, addLog bool) bool{
 	if err != nil {
 		if addLog {
 			log.Printf("Error %s: %s", errText, err)
 		}
 		w.WriteHeader(headerNumber)
 		w.Write([]byte(errText))
+		return true
 	}
+	return false
 }
 
 func sendErrorJSON(w http.ResponseWriter, err error, errHeaderNumber int){
@@ -262,7 +273,9 @@ func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 	var chirpsSlice []chirpsJSON
 	
 	chirps, err := a.queries.GetAllChirps(r.Context())
-	errorHandler(w, err, "Error fetching chirps", 500, true)
+	if errorHandler(w, err, "Error fetching chirps", 500, true){
+		return
+	}
 
 	for _ , chirp := range chirps{
 		a_chirp := chirpsJSON{
@@ -289,10 +302,14 @@ func (a *apiConfig) getChirp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uID , err := uuid.Parse(r.PathValue("chirpID"))
-	errorHandler(w, err, "Error reading chirp ID", 500, true)
+	if errorHandler(w, err, "Error reading chirp ID", 500, true){
+		return
+	}
 
 	chirp, err := a.queries.GetChirp(r.Context(),uID)
-	errorHandler(w, err, "Error fetching chirp", 500, true)
+	if errorHandler(w, err, "Error fetching chirp", 500, true){
+		return
+	}
 
 	a_chirp := chirpJSON{
 		ID: chirp.ID,
@@ -313,9 +330,13 @@ func (a *apiConfig) resetFileserverHitsHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	err := a.queries.ClearUsers(r.Context())
-	errorHandler(w, err, "Error clearing users", 500, true)
+	if errorHandler(w, err, "Error clearing users", 500, true){
+		return
+	}
 	err = a.queries.ClearChirps(r.Context())
-	errorHandler(w, err, "Error clearing chirps", 500, true)
+	if errorHandler(w, err, "Error clearing chirps", 500, true){
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -350,10 +371,14 @@ func (a *apiConfig) createUserHandle(w http.ResponseWriter, r *http.Request){
 	decoder := json.NewDecoder(r.Body)
 	input := inputJSON{}
 	err := decoder.Decode(&input)
-	errorHandler(w, err, "Error decoding", 500, true)
+	if errorHandler(w, err, "Error decoding", 500, true){
+		return
+	}
 
 	hashed_password, err:= auth.HashPassword(input.Password)
-	errorHandler(w, err, "Error hashing password", 500, true)
+	if errorHandler(w, err, "Error hashing password", 500, true){
+		return
+	}
 
 	params := database.CreateUserParams{
 		Email: input.Email,
@@ -361,7 +386,9 @@ func (a *apiConfig) createUserHandle(w http.ResponseWriter, r *http.Request){
 	}
 
 	user, err := a.queries.CreateUser(r.Context(), params)
-	errorHandler(w, err, "Error creating user", 500, true)
+	if errorHandler(w, err, "Error creating user", 500, true){
+		return
+	}
 
 	output := outputJSON{
 		ID: user.ID,
@@ -389,20 +416,30 @@ func (a *apiConfig) loginHandle(w http.ResponseWriter, r *http.Request){
 	expiredJWT :=  "1h"
 	expiredRefreshToken := "1440h"
 	expireJWTdDuration , err := time.ParseDuration(expiredJWT)
-	errorHandler(w, err, "Error parsing JWT time", 500, true)
+	if errorHandler(w, err, "Error parsing JWT time", 500, true){
+		return
+	}
 	expireRefreshDuration , err := time.ParseDuration(expiredRefreshToken)
-	errorHandler(w, err, "Error parsing refresh time", 500, true)
+	if errorHandler(w, err, "Error parsing refresh time", 500, true){
+		return
+	}
 
 	decoder := json.NewDecoder(r.Body)
 	input := inputJSON{}
 	err = decoder.Decode(&input)
-	errorHandler(w, err, "Error decoding", 500, true)
+	if errorHandler(w, err, "Error decoding", 500, true){
+		return
+	}
 
 	user, err := a.queries.GetUserByEmail(r.Context(), input.Email)
-	errorHandler(w, err, "Error fetching user", 401, true)
+	if errorHandler(w, err, "Error fetching user", 401, true){
+		return
+	}
 
 	same, err := auth.CheckPasswordHash(input.Password, user.HashedPassword)
-	errorHandler(w, err, "Error checking password", 401, true)
+	if errorHandler(w, err, "Error checking password", 401, true){
+		return
+	}
 	if !same {
 		w.WriteHeader(401)
 		w.Write([]byte("401 Unauthorized"))
@@ -410,9 +447,13 @@ func (a *apiConfig) loginHandle(w http.ResponseWriter, r *http.Request){
 	}
 
 	token, err := auth.MakeJWT(user.ID, a.secret , expireJWTdDuration)
-	errorHandler(w, err, "Error making JWT token", 500, true)
+	if errorHandler(w, err, "Error making JWT token", 500, true){
+		return
+	}
 	refreshToken, err := auth.MakeRefreshToken()
-	errorHandler(w, err, "Error making refresh token", 500, true)
+	if errorHandler(w, err, "Error making refresh token", 500, true){
+		return
+	}
 
 	params := database.CreateRefreshTokenParams{
 		Token: refreshToken,
@@ -421,7 +462,9 @@ func (a *apiConfig) loginHandle(w http.ResponseWriter, r *http.Request){
 		RevokedAt: sql.NullTime{Valid: false},
 	}
 	_, err = a.queries.CreateRefreshToken(r.Context(), params)
-	errorHandler(w, err, "Error creating refresh token in database", 500, true)
+	if errorHandler(w, err, "Error creating refresh token in database", 500, true){
+		return
+	}
 
 	output := outputJSON{
 		ID: user.ID,
@@ -441,10 +484,14 @@ func (a *apiConfig) refreshHandle(w http.ResponseWriter, r *http.Request){
 	}
 
 	token, err := auth.GetBearerToken(r.Header)
-	errorHandler(w, err, "Error reading token", 401, false)
+	if errorHandler(w, err, "Error reading token", 401, false){
+		return
+	}
 
 	refreshToken , err := a.queries.GetRefreshToken(r.Context(), token)
-	errorHandler(w, err, "Error fetching refresh token", 500, true)
+	if errorHandler(w, err, "Error fetching refresh token", 500, true){
+		return
+	}
 	if !refreshToken.ExpiresAt.After(time.Now()) || refreshToken.RevokedAt.Valid{
 		w.WriteHeader(401)
 		w.Write([]byte("401 Unauthorized"))
@@ -453,10 +500,14 @@ func (a *apiConfig) refreshHandle(w http.ResponseWriter, r *http.Request){
 	
 
 	duration , err := time.ParseDuration("1h")
-	errorHandler(w, err, "Error parsing time", 500, true)
+	if errorHandler(w, err, "Error parsing time", 500, true){
+		return
+	}
 	
 	token, err = auth.MakeJWT(refreshToken.UserID, a.secret , duration)
-	errorHandler(w, err, "Error making JWT token", 500, true)
+	if errorHandler(w, err, "Error making JWT token", 500, true){
+		return
+	}
 
 	output := outputJSON{
 		Token: token,
@@ -468,10 +519,14 @@ func (a *apiConfig) refreshHandle(w http.ResponseWriter, r *http.Request){
 func (a *apiConfig) revokeHandle(w http.ResponseWriter, r *http.Request){
 
 	token, err := auth.GetBearerToken(r.Header)
-	errorHandler(w, err, "Error reading token", 401, false)
+	if errorHandler(w, err, "Error reading token", 401, false){
+		return
+	}
 
 	refreshToken , err := a.queries.GetRefreshToken(r.Context(), token)
-	errorHandler(w, err, "Error fetching refresh token", 500, true)
+	if errorHandler(w, err, "Error fetching refresh token", 500, true){
+		return
+	}
 	if !refreshToken.ExpiresAt.After(time.Now()) || refreshToken.RevokedAt.Valid{
 		w.WriteHeader(401)
 		w.Write([]byte("401 Unauthorized"))
@@ -479,8 +534,65 @@ func (a *apiConfig) revokeHandle(w http.ResponseWriter, r *http.Request){
 	}
 	
 	_, err = a.queries.UpdateRefreshToken(r.Context(), token)
-	errorHandler(w, err, "Error updating refresh token", 500, true)
+	if errorHandler(w, err, "Error updating refresh token", 500, true){
+		return
+	}
 	
 	w.WriteHeader(204)
 
+}
+
+func (a *apiConfig) updateUserNameAndPasswordHandle(w http.ResponseWriter, r *http.Request){
+	type inputJSON struct {
+		Password string `json:"password"`
+		Email string `json:"email"`
+	}
+	type outputJSON struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Email     string `json:"email"`
+	}
+	
+	token, err := auth.GetBearerToken(r.Header)
+	if errorHandler(w, err, "Error reading token", 401, false){
+		return
+	}
+
+	userID , err := auth.ValidateJWT(token, a.secret)
+	if errorHandler(w, err, "Error validating token", 401, false){
+		return
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	input := inputJSON{}
+	err = decoder.Decode(&input)
+	if errorHandler(w, err, "Error decoding", 500, true){
+		return
+	}
+
+	hashed_password, err:= auth.HashPassword(input.Password)
+	if errorHandler(w, err, "Error hashing password", 500, true){
+		return
+	}
+
+	params := database.UpdateUsernameAndPasswordParams{
+		Email: input.Email,
+		HashedPassword: hashed_password,
+		ID: userID,
+	}
+
+	user, err := a.queries.UpdateUsernameAndPassword(r.Context(), params)
+	if errorHandler(w, err, "Error updating user", 500, true){
+		return
+	}
+	
+	output := outputJSON{
+		ID: user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: time.Now(),
+		Email: user.Email,
+	}
+
+	sendJSON(w,output,200)
 }

@@ -64,6 +64,7 @@ func main() {
 	serverMux.HandleFunc("POST /api/refresh", apiConfig.refreshHandle)
 	serverMux.HandleFunc("POST /api/revoke", apiConfig.revokeHandle)
 	serverMux.HandleFunc("PUT /api/users", apiConfig.updateUserNameAndPasswordHandle)
+	serverMux.HandleFunc("DELETE /api/chirps/{chirpID}", apiConfig.deleteChirpHandle)
 
 	serverStruct.ListenAndServe()
 }
@@ -307,7 +308,10 @@ func (a *apiConfig) getChirp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	chirp, err := a.queries.GetChirp(r.Context(),uID)
-	if errorHandler(w, err, "Error fetching chirp", 500, true){
+	if err == sql.ErrNoRows {
+		errorHandler(w, err, "Error finding chirp", 404, true)
+		return
+	} else if errorHandler(w, err, "Error fetching chirp", 500, true){
 		return
 	}
 
@@ -595,4 +599,46 @@ func (a *apiConfig) updateUserNameAndPasswordHandle(w http.ResponseWriter, r *ht
 	}
 
 	sendJSON(w,output,200)
+}
+
+
+func (a *apiConfig) deleteChirpHandle(w http.ResponseWriter, r *http.Request){
+	chirpID , err := uuid.Parse(r.PathValue("chirpID"))
+	if errorHandler(w, err, "Error reading chirp ID", 500, true){
+		return
+	}
+
+	token, err := auth.GetBearerToken(r.Header)
+	if errorHandler(w, err, "Error reading token", 401, false){
+		return
+	}
+
+	userID , err := auth.ValidateJWT(token, a.secret)
+	if errorHandler(w, err, "Error validating token", 401, false){
+		return
+	}
+
+	chirp, err := a.queries.GetChirp(r.Context(), chirpID)
+	if err == sql.ErrNoRows {
+		errorHandler(w, err, "Error finding chirp", 404, true)
+		return
+	} else if errorHandler(w, err, "Error fetching chirp", 500, true){
+		return
+	}
+	
+	if chirp.UserID != userID {
+		w.WriteHeader(403)
+		w.Write([]byte("403 Forbidden"))
+		return
+	}
+
+	err = a.queries.DeleteChirp(r.Context(), chirpID)
+	if err == sql.ErrNoRows {
+		errorHandler(w, err, "Error finding chirp", 404, true)
+		return
+	} else if errorHandler(w, err, "Error deleting chirp", 500, true){
+		return
+	}
+
+	w.WriteHeader(204)
 }

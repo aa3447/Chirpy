@@ -63,6 +63,7 @@ func main() {
 	serverMux.HandleFunc("POST /api/login", apiConfig.loginHandle)
 	serverMux.HandleFunc("POST /api/refresh", apiConfig.refreshHandle)
 	serverMux.HandleFunc("POST /api/revoke", apiConfig.revokeHandle)
+	serverMux.HandleFunc("POST /api/polka/webhooks", apiConfig.updateUserChirpyRedStatus)
 	serverMux.HandleFunc("PUT /api/users", apiConfig.updateUserNameAndPasswordHandle)
 	serverMux.HandleFunc("DELETE /api/chirps/{chirpID}", apiConfig.deleteChirpHandle)
 
@@ -370,6 +371,7 @@ func (a *apiConfig) createUserHandle(w http.ResponseWriter, r *http.Request){
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Email     string `json:"email"`
+		IsChirpyRed bool `json:"is_chirpy_red"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -399,6 +401,7 @@ func (a *apiConfig) createUserHandle(w http.ResponseWriter, r *http.Request){
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email: user.Email,
+		IsChirpyRed: user.IsChirpyRed,
 	}
 
 	sendJSON(w,output,201)
@@ -416,6 +419,7 @@ func (a *apiConfig) loginHandle(w http.ResponseWriter, r *http.Request){
 		Email     string `json:"email"`
 		Token string `json:"token"`
 		RefreshToken string `json:"refresh_token"`
+		IsChirpyRed bool `json:"is_chirpy_red"`
 	}
 	expiredJWT :=  "1h"
 	expiredRefreshToken := "1440h"
@@ -476,7 +480,8 @@ func (a *apiConfig) loginHandle(w http.ResponseWriter, r *http.Request){
 		UpdatedAt: user.UpdatedAt,
 		Email: user.Email,
 		Token: token,
-		RefreshToken: refreshToken, 
+		RefreshToken: refreshToken,
+		IsChirpyRed: user.IsChirpyRed, 
 	}
 	
 	sendJSON(w, output, 200)
@@ -556,6 +561,7 @@ func (a *apiConfig) updateUserNameAndPasswordHandle(w http.ResponseWriter, r *ht
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Email     string `json:"email"`
+		IsChirpyRed bool `json:"is_chirpy_red"`
 	}
 	
 	token, err := auth.GetBearerToken(r.Header)
@@ -594,11 +600,63 @@ func (a *apiConfig) updateUserNameAndPasswordHandle(w http.ResponseWriter, r *ht
 	output := outputJSON{
 		ID: user.ID,
 		CreatedAt: user.CreatedAt,
-		UpdatedAt: time.Now(),
 		Email: user.Email,
+		IsChirpyRed: user.IsChirpyRed,
 	}
 
 	sendJSON(w,output,200)
+}
+
+func (a *apiConfig) updateUserChirpyRedStatus(w http.ResponseWriter, r *http.Request) {
+	type inputJSON struct {
+		Event string `json:"event"`
+		Data struct {
+			User_id string `json:"user_id"`
+		} `json:"data"`
+	}
+
+	key , err := auth.GetAPIKey(r.Header)
+	if errorHandler(w, err, "Error reading API key", 401, false){
+		return
+	} else if key != os.Getenv("POLKA_KEY") {
+		w.WriteHeader(401)
+		w.Write([]byte("401 Unauthorized"))
+		return
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	input := inputJSON{}
+	err = decoder.Decode(&input)
+	if errorHandler(w, err, "Error decoding", 500, true){
+		return
+	}
+
+	if input.Event != "user.upgraded" {
+		w.WriteHeader(204)
+		w.Write([]byte("No action taken"))
+		return
+	}
+
+	userID, err := uuid.Parse(input.Data.User_id)
+	if errorHandler(w, err, "Error parsing user ID", 500, true){
+		return
+	}
+
+	params := database.UpdateUserChirpyRedParams{
+		IsChirpyRed: true,
+		ID: userID,
+	}
+
+	_, err = a.queries.UpdateUserChirpyRed(r.Context(), params)
+	if err == sql.ErrNoRows {
+		errorHandler(w, err, "Error finding user", 404, true)
+		return
+	} else if errorHandler(w, err, "Error updating user chirpy red status", 500, true){
+		return
+	}
+
+	w.WriteHeader(204)
+	w.Write([]byte("User chirpy red status updated"))
 }
 
 

@@ -44,6 +44,11 @@ WHERE email = $1;
 SELECT * FROM chirps
 ORDER BY created_at;
 
+-- name: GetAllChirpsFromUser :many
+SELECT * FROM chirps
+WHERE user_id = $1
+ORDER BY created_at;
+
 -- name: GetRefreshToken :one
 SELECT * FROM refresh_tokens
 WHERE token = $1;

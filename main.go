@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -56,7 +57,7 @@ func main() {
 	serverMux.HandleFunc("GET /api/healthz", readinessHandler)
 	serverMux.HandleFunc("GET /admin/metrics", apiConfig.getFileserverHitsHandler)
 	serverMux.HandleFunc("GET /api/chirps/{chirpID}", apiConfig.getChirp)
-	serverMux.HandleFunc("GET /api/chirps", apiConfig.getChirps)
+	serverMux.HandleFunc("GET /api/chirps", apiConfig.getChirpsWithQuery)
 	serverMux.HandleFunc("POST /admin/reset", apiConfig.resetFileserverHitsHandler)
 	serverMux.HandleFunc("POST /api/chirps", apiConfig.validateChirp)
 	serverMux.HandleFunc("POST /api/users", apiConfig.createUserHandle)
@@ -264,7 +265,7 @@ func (a *apiConfig) getFileserverHitsHandler(w http.ResponseWriter, r *http.Requ
 	w.Write([]byte(hits))
 }
 
-func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
+func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request, order string) {
 	type chirpsJSON struct{
 		ID        uuid.UUID `json:"id"`
 		CreatedAt time.Time `json:"created_at"`
@@ -288,6 +289,56 @@ func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
   		UserID: chirp.UserID,
 		}
 		chirpsSlice = append(chirpsSlice, a_chirp)
+	}
+
+	if order == "desc" {
+		slices.Reverse(chirpsSlice)
+	}
+
+	sendJSON(w, chirpsSlice, 200)
+}
+
+func (a *apiConfig) getChirpsWithQuery(w http.ResponseWriter, r *http.Request) {
+	type chirpsJSON struct{
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string `json:"body"`
+		UserID    uuid.UUID `json:"user_id"`
+	}
+	var chirpsSlice []chirpsJSON
+
+	userIDString := r.URL.Query().Get("author_id")
+	sortOrder := r.URL.Query().Get("sort")
+	
+	if userIDString == "" {
+		a.getChirps(w,r,sortOrder)
+		return
+	}
+
+	userID , err := uuid.Parse(userIDString)
+	if errorHandler(w, err, "Error reading chirp ID", 500, true){
+		return
+	}
+	
+	chirps, err := a.queries.GetAllChirpsFromUser(r.Context(), userID )
+	if errorHandler(w, err, "Error fetching chirps", 500, true){
+		return
+	}
+
+	for _ , chirp := range chirps{
+		a_chirp := chirpsJSON{
+		ID: chirp.ID,
+  		CreatedAt: chirp.CreatedAt,
+  		UpdatedAt: chirp.UpdatedAt,
+  		Body: chirp.Body,
+  		UserID: chirp.UserID,
+		}
+		chirpsSlice = append(chirpsSlice, a_chirp)
+	}
+
+	if sortOrder == "desc" {
+		slices.Reverse(chirpsSlice)
 	}
 
 
